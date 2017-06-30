@@ -20,24 +20,38 @@ namespace Certify.UI.Controls
     /// </summary>
     public partial class ManagedSites
     {
-        public Models.AppModel ViewModel
+        protected Certify.UI.ViewModel.AppModel MainViewModel
         {
             get
             {
-                return Models.AppModel.AppViewModel;
+                return ViewModel.AppModel.AppViewModel;
             }
         }
 
         public ManagedSites()
         {
             InitializeComponent();
+
+            if (!System.ComponentModel.DesignerProperties.GetIsInDesignMode(this))
+            {
+                this.DataContext = MainViewModel;
+            }
         }
 
         private void ListView_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (e.AddedItems.Count > 0)
             {
-                ViewModel.SelectedItem = (Certify.Models.ManagedSite)e.AddedItems[0];
+                if (MainViewModel.SelectedItem != null && MainViewModel.SelectedItemHasChanges && MainViewModel.SelectedItem.Id != null)
+                {
+                    //user needs to save or discard changes before changing selection
+                    MessageBox.Show("You have unsaved changes. Save or Discard your changes before proceeding.");
+                }
+                else
+                {
+                    MainViewModel.SelectedItem = (Certify.Models.ManagedSite)e.AddedItems[0];
+                    MainViewModel.MarkAllChangesCompleted();
+                }
             }
         }
 
@@ -47,6 +61,14 @@ namespace Certify.UI.Controls
 
         private void ManagedItemSettings_Loaded(object sender, RoutedEventArgs e)
         {
+        }
+
+        private void Button_Click(object sender, RoutedEventArgs e)
+        {
+            if (MainViewModel.ManagedSites != null && MainViewModel.ManagedSites.Any())
+            {
+                // this.MainViewModel.ManagedSites[0].Name = DateTime.Now.ToShortDateString();
+            }
         }
     }
 }

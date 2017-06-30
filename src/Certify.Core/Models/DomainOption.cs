@@ -1,5 +1,7 @@
-﻿using System;
+﻿using PropertyChanged;
+using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -8,6 +10,8 @@ namespace Certify.Models
 {
     public class DomainOption
     {
+        public bool IsChanged { get; set; }
+
         /// <summary>
         /// Domain name we are managing
         /// </summary>

@@ -1,5 +1,5 @@
-﻿using Certify.UI.Models;
-using MahApps.Metro;
+﻿using MahApps.Metro;
+using Microsoft.ApplicationInsights;
 using System;
 using System.Collections.Generic;
 using System.Configuration;
@@ -15,7 +15,15 @@ namespace Certify.UI
     /// </summary>
     public partial class App : Application
     {
-        public AppModel AppViewModel { get; set; }
+        private TelemetryClient tc = null;
+
+        protected Certify.UI.ViewModel.AppModel MainViewModel
+        {
+            get
+            {
+                return UI.ViewModel.AppModel.AppViewModel;
+            }
+        }
 
         protected override void OnStartup(StartupEventArgs e)
         {
@@ -29,10 +37,66 @@ namespace Certify.UI
                                         ThemeManager.GetAccent("Green"),
                                         ThemeManager.GetAppTheme("BaseLight")); // or appStyle.Item1
 */
+
+            AppDomain currentDomain = AppDomain.CurrentDomain;
+            currentDomain.UnhandledException += CurrentDomain_UnhandledException;
+
             base.OnStartup(e);
 
-            this.AppViewModel = new AppModel();
-            this.AppViewModel.LoadSettings();
+            MainViewModel.LoadSettings();
+
+            //check version capabilities
+            MainViewModel.PluginManager = new Management.PluginManager();
+
+            MainViewModel.PluginManager.LoadPlugins();
+
+            var licensingManager = MainViewModel.PluginManager.LicensingManager;
+            if (licensingManager != null)
+            {
+                if (licensingManager.IsInstallRegistered(ViewModel.AppModel.ProductTypeId, Certify.Management.Util.GetAppDataFolder()))
+                {
+                    MainViewModel.IsRegisteredVersion = true;
+                }
+            }
+
+            //check for updates and report result to view model
+            Task.Run(async () =>
+            {
+                var updateCheck = await new Certify.Management.Util().CheckForUpdates();
+                if (updateCheck != null && updateCheck.IsNewerVersion)
+                {
+                    MainViewModel.IsUpdateAvailable = true;
+                    MainViewModel.UpdateCheckResult = updateCheck;
+                }
+            });
+
+            //init telemetry if enabled
+            InitTelemetry();
+        }
+
+        private void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
+        {
+            var feedbackMsg = "";
+            if (e.ExceptionObject != null)
+            {
+                feedbackMsg = "An error occurred: " + ((Exception)e.ExceptionObject).ToString();
+            }
+
+            var d = new Windows.Feedback(feedbackMsg, isException: true);
+            d.ShowDialog();
+        }
+
+        private void InitTelemetry()
+        {
+            if (Certify.Properties.Settings.Default.EnableAppTelematics)
+            {
+                tc = new Certify.Management.Util().InitTelemetry();
+                tc.TrackEvent("Start");
+            }
+            else
+            {
+                tc = null;
+            }
         }
     }
 }
