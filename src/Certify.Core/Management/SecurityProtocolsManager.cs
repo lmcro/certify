@@ -1,9 +1,5 @@
-﻿using Microsoft.Win32;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System;
+using Microsoft.Win32;
 
 namespace Certify.Management
 {
@@ -29,8 +25,8 @@ namespace Certify.Management
             //set \Client\DisabledByDefault=1
 
             //RegistryKey SSLProtocolsKey =  Registry.LocalMachine..OpenSubKey(@"SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\", true);
-            RegistryKey SSLProtocolsKey = GetRegistryBaseKey(RegistryHive.LocalMachine).OpenSubKey(@"SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\", true);
-            RegistryKey SSLProtocolKey = GetRegistryBaseKey(RegistryHive.LocalMachine).OpenSubKey(@"SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\" + protocolKey, true);
+            var SSLProtocolsKey = GetRegistryBaseKey(RegistryHive.LocalMachine).OpenSubKey(@"SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\", true);
+            var SSLProtocolKey = GetRegistryBaseKey(RegistryHive.LocalMachine).OpenSubKey(@"SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\" + protocolKey, true);
 
             //create key for protocol if it doesn't exist
             if (SSLProtocolKey == null)
@@ -39,7 +35,7 @@ namespace Certify.Management
             }
 
             //create Client key if required
-            RegistryKey clientKey = SSLProtocolKey.OpenSubKey("Client", true);
+            var clientKey = SSLProtocolKey.OpenSubKey("Client", true);
             if (clientKey == null)
             {
                 clientKey = SSLProtocolKey.CreateSubKey("Client");
@@ -48,23 +44,23 @@ namespace Certify.Management
             //DisabledByDefault=1
 
             clientKey.SetValue("DisabledByDefault", 1, RegistryValueKind.DWord);
-            clientKey.Close();
+            // clientKey.Close();
             //set \Server\Enabled=0
-            RegistryKey serverKey = SSLProtocolKey.OpenSubKey("Server", true);
+            var serverKey = SSLProtocolKey.OpenSubKey("Server", true);
             if (serverKey == null)
             {
                 serverKey = SSLProtocolKey.CreateSubKey("Server");
             }
 
             serverKey.SetValue("Enabled", 0, RegistryValueKind.DWord);
-            serverKey.Close();
+            // serverKey.Close();
         }
 
         private void DisableSSLCipherViaRegistry(string cipher)
         {
-            RegistryKey cipherTypesKey = GetRegistryBaseKey(RegistryHive.LocalMachine).OpenSubKey(@"SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\", true);
+            var cipherTypesKey = GetRegistryBaseKey(RegistryHive.LocalMachine).OpenSubKey(@"SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\", true);
 
-            RegistryKey cipherKey = GetRegistryBaseKey(RegistryHive.LocalMachine).OpenSubKey(@"SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\" + cipher, true);
+            var cipherKey = GetRegistryBaseKey(RegistryHive.LocalMachine).OpenSubKey(@"SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers\" + cipher, true);
 
             if (cipherKey == null)
             {
@@ -72,7 +68,7 @@ namespace Certify.Management
             }
 
             cipherKey.SetValue("Enabled", 0, RegistryValueKind.DWord);
-            cipherKey.Close();
+            // cipherKey.Close();
         }
 
         #endregion Registry

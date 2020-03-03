@@ -1,35 +1,19 @@
-﻿using Certify.Models;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+﻿using System;
 using System.Text.RegularExpressions;
-using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
 using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Shapes;
+using Certify.Models;
 
 namespace Certify.UI.Windows
 {
     /// <summary>
-    /// Interaction logic for EditContactDialog.xaml
+    /// Interaction logic for EditContactDialog.xaml 
     /// </summary>
     public partial class EditContactDialog
     {
         public ContactRegistration Item { get; set; }
 
-        protected Certify.UI.ViewModel.AppModel MainViewModel
-        {
-            get
-            {
-                return ViewModel.AppModel.AppViewModel;
-            }
-        }
+        protected Certify.UI.ViewModel.AppViewModel MainViewModel => ViewModel.AppViewModel.Current;
 
         public EditContactDialog()
         {
@@ -37,20 +21,20 @@ namespace Certify.UI.Windows
 
             Item = new ContactRegistration();
 
-            this.DataContext = Item;
+            DataContext = Item;
         }
 
         private void Cancel_Click(object sender, RoutedEventArgs e)
         {
             Mouse.OverrideCursor = Cursors.Arrow;
-            this.Close();
+            Close();
         }
 
-        private void Save_Click(object sender, RoutedEventArgs e)
+        private async void Save_Click(object sender, RoutedEventArgs e)
         {
             //add/update contact
-            bool isValidEmail = true;
-            if (String.IsNullOrEmpty(Item.EmailAddress))
+            var isValidEmail = true;
+            if (string.IsNullOrEmpty(Item.EmailAddress))
             {
                 isValidEmail = false;
             }
@@ -67,7 +51,7 @@ namespace Certify.UI.Windows
 
             if (!isValidEmail)
             {
-                MessageBox.Show("Ooops, you forgot to provide a valid email address.");
+                MessageBox.Show(Certify.Locales.SR.New_Contact_EmailError);
 
                 return;
             }
@@ -75,21 +59,25 @@ namespace Certify.UI.Windows
             if (Item.AgreedToTermsAndConditions)
             {
                 Mouse.OverrideCursor = Cursors.Wait;
-                if (MainViewModel.AddContactCommand.CanExecute((Item)))
-                {
-                    Application.Current.Dispatcher.BeginInvoke(new Action(
-                        () =>
-                        {
-                            MainViewModel.AddContactCommand.Execute(Item);
-                        }));
 
-                    Mouse.OverrideCursor = Cursors.Arrow;
-                    this.Close();
+                var addedOK = await MainViewModel.AddContactRegistration(Item);
+
+                Mouse.OverrideCursor = Cursors.Arrow;
+
+                if (addedOK)
+                {
+                    MainViewModel.PrimaryContactEmail = await MainViewModel.CertifyClient.GetPrimaryContact();
+                    Close();
+                }
+                else
+                {
+                    // FIXME: specific error message or a general try again message
+                    MessageBox.Show(Certify.Locales.SR.New_Contact_EmailError);
                 }
             }
             else
             {
-                MessageBox.Show("You need to agree to the latest LetsEncrypt.org Subscriber Agreement.");
+                MessageBox.Show(Certify.Locales.SR.New_Contact_NeedAgree);
             }
         }
     }

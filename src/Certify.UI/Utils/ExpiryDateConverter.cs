@@ -1,12 +1,7 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Linq;
-using System.Reflection;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Data;
+using Certify.Locales;
 
 namespace Certify.UI.Utils
 {
@@ -14,8 +9,6 @@ namespace Certify.UI.Utils
     {
         public object Convert(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture)
         {
-            if (value == null) return DependencyProperty.UnsetValue;
-
             return GetDescription((DateTime?)value);
         }
 
@@ -26,10 +19,13 @@ namespace Certify.UI.Utils
 
         public static string GetDescription(DateTime? expiry)
         {
-            if (expiry == null) return "No current certificate.";
+            if (expiry == null)
+            {
+                return SR.ExpiryDateConverter_NoCurrentCertificate;
+            }
 
             var days = (int)Math.Abs((DateTime.Now - expiry).Value.TotalDays);
-            return String.Format("Expires in {0} days", days);
+            return string.Format(SR.ExpiryDateConverter_CertificateExpiresIn, days);
         }
     }
 
@@ -37,7 +33,10 @@ namespace Certify.UI.Utils
     {
         public object Convert(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture)
         {
-            if (value == null) return DependencyProperty.UnsetValue;
+            if (value == null)
+            {
+                return DependencyProperty.UnsetValue;
+            }
 
             return GetColour((DateTime?)value);
         }
@@ -49,7 +48,10 @@ namespace Certify.UI.Utils
 
         public static System.Windows.Media.Brush GetColour(DateTime? expiry)
         {
-            if (expiry == null) return System.Windows.Media.Brushes.SlateGray;
+            if (expiry == null)
+            {
+                return System.Windows.Media.Brushes.SlateGray;
+            }
 
             var days = (int)Math.Abs((DateTime.Now - expiry).Value.TotalDays);
 
@@ -57,7 +59,7 @@ namespace Certify.UI.Utils
             {
                 return System.Windows.Media.Brushes.Red;
             }
-            else if (days < 14)
+            else if (days < 30)
             {
                 return System.Windows.Media.Brushes.OrangeRed;
             }

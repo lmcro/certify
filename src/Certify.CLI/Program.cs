@@ -1,299 +1,171 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
-using Certify.Management;
-using Certify.Models;
-using Newtonsoft.Json;
-using Microsoft.ApplicationInsights;
 
 namespace Certify.CLI
 {
     internal class Program
     {
-        private static int Main(string[] args)
+        const int MAX_CHALLENGE_SERVER_RUNTIME = 1000 * 60 * 30;  // Allow up to 30 mins of run time for the challenge server (normall run time is
+
+        private static async Task<int> Main(string[] args)
         {
+            var defaultFontColour = Console.ForegroundColor;
+
+            var p = new CertifyCLI();
+
             if (args.Length == 0)
             {
-                ShowVersion();
-                ShowHelp();
-
-                var p = new Program();
+                p.ShowHelp();
                 p.ShowACMEInfo();
-                //p.PreviewAutoManage();
-                //p.PerformVaultCleanup();
-                //System.Console.ReadKey();
-                return 1;
             }
             else
             {
-                var p = new Program();
+                var command = "";
 
-                ShowVersion();
+                if (args.Any())
+                {
+                    command = args[0].ToLower().Trim();
+                }
+
+                if (command == "storeserverconfig")
+                {
+                    SharedUtils.ServiceConfigManager.StoreCurrentAppServiceConfig();
+                    return 0;
+                }
+
+                if (command == "httpchallenge")
+                {
+                    return await StartHttpChallengeServer(args);
+                }
+
+                p.ShowVersion();
+
+                if (!p.IsServiceAvailable().Result)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    System.Console.WriteLine("Certify SSL Manager service not started.");
+                    Console.ForegroundColor = defaultFontColour;
+                    return -1;
+                }
+
+                await p.LoadPreferences();
 
                 p.ShowACMEInfo();
 
-                if (args.Contains("renew", StringComparer.InvariantCultureIgnoreCase))
+                if (command == "renew")
                 {
-                    //renew all
-                    var t = p.PerformAutoRenew();
-                    t.ConfigureAwait(true);
-
-                    t.Wait();
+                    // perform auto renew all
+                    await p.PerformAutoRenew();
                 }
-                //System.Console.ReadKey();
-            }
 
-            return 0;
-        }
-
-        private readonly IdnMapping _idnMapping = new IdnMapping();
-        private TelemetryClient tc = null;
-
-        private void InitTelematics()
-        {
-            if (Certify.Properties.Settings.Default.EnableAppTelematics)
-            {
-                tc = new TelemetryClient();
-                tc.Context.InstrumentationKey = Certify.Properties.Resources.AIInstrumentationKey;
-                tc.InstrumentationKey = Certify.Properties.Resources.AIInstrumentationKey;
-
-                // Set session data:
-
-                tc.Context.Session.Id = Guid.NewGuid().ToString();
-                tc.Context.Component.Version = new Certify.Management.Util().GetAppVersion().ToString();
-                tc.Context.Device.OperatingSystem = Environment.OSVersion.ToString();
-                tc.TrackEvent("StartCLI");
-            }
-        }
-
-        private void PerformVaultCleanup()
-        {
-            /*var vaultManager = new VaultManager(Properties.Settings.Default.VaultPath, LocalDiskVault.VAULT);
-
-            //init vault if not already created
-            vaultManager.InitVault(staging: true);
-
-            vaultManager.CleanupVault();*/
-        }
-
-        private static void ShowVersion()
-        {
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            System.Console.WriteLine("Certify SSL Manager - CLI v1.0.0");
-            Console.ForegroundColor = ConsoleColor.White;
-            System.Console.WriteLine("For more information see " + Certify.Properties.Resources.AppWebsiteURL);
-            System.Console.WriteLine("");
-        }
-
-        private void ShowACMEInfo()
-        {
-            var certifyManager = new CertifyManager();
-            string vaultInfo = certifyManager.GetVaultSummary();
-            string acmeInfo = certifyManager.GetAcmeSummary();
-
-            Console.ForegroundColor = ConsoleColor.DarkYellow;
-            System.Console.WriteLine("Let's Encrypt ACME API: " + acmeInfo);
-            System.Console.WriteLine("ACMESharp Vault: " + vaultInfo);
-
-            System.Console.WriteLine("");
-            Console.ForegroundColor = ConsoleColor.White;
-        }
-
-        private static void ShowHelp()
-        {
-            Console.ForegroundColor = ConsoleColor.White;
-            System.Console.WriteLine("Usage: certify <command> \n");
-            System.Console.WriteLine("certify renew : renew certificates for all auto renewed managed sites");
-            // System.Console.WriteLine("help : show this help information");
-
-            // System.Console.WriteLine("-l --list : list managed sites");
-            //  System.Console.WriteLine("-p --preview : auto scan and preview proposed list of managed sites");
-            System.Console.WriteLine("\n");
-        }
-
-        /// <summary>
-        /// Auto scan and preview list of sites to manage
-        /// </summary>
-        private void PreviewAutoManage()
-        {
-            var siteManager = new ItemManager();
-            var siteList = siteManager.Preview();
-
-            if (siteList == null || siteList.Count == 0)
-            {
-                System.Console.WriteLine("No Sites configured or access denied.");
-            }
-            else
-            {
-                foreach (var s in siteList)
+                if (command == "deploy")
                 {
-                    /* Console.ForegroundColor = ConsoleColor.White;
-                     System.Console.WriteLine(String.Format("{0} ({1}): Create single certificate for {2} bindings: \n", s.SiteName, s.SiteType.ToString(), s.SiteBindings.Count));
+                    string managedCertName = null;
+                    string taskName = null;
 
-                     Console.ResetColor();
-                     foreach (var b in s.SiteBindings)
-                     {
-                         System.Console.WriteLine("\t" + b.Hostname + " \n");
-                     }*/
-                }
-            }
-
-            siteManager.StoreSettings();
-        }
-
-        private async Task<System.Collections.Generic.List<CertificateRequestResult>> PerformAutoRenew()
-        {
-            if (tc == null) InitTelematics();
-            if (tc != null)
-            {
-                tc.TrackEvent("CLI_BeginAutoRenew");
-            }
-
-            Console.ForegroundColor = ConsoleColor.White;
-            System.Console.WriteLine("\nPerforming Auto Renewals..\n");
-
-            //go through list of items configured for auto renew, perform renewal and report the result
-            var certifyManager = new CertifyManager();
-            var results = await certifyManager.PerformRenewalAllManagedSites(autoRenewalOnly: true);
-
-            foreach (var r in results)
-            {
-                if (r.ManagedItem != null)
-                {
-                    if (r.IsSuccess)
+                    if (args.Length >= 3)
                     {
-                        Console.ForegroundColor = ConsoleColor.Green;
-                        System.Console.WriteLine(r.ManagedItem.Name);
+                        // got command, cert and task name
+                        managedCertName = args[1].Trim();
+                        taskName = args[2].Trim();
+                    }
+                    else if (args.Length == 2)
+                    {
+                        // got command and cert name, run all deployment tasks
+                        managedCertName = args[1].Trim();
                     }
                     else
                     {
-                        Console.ForegroundColor = ConsoleColor.DarkYellow;
-                        System.Console.WriteLine(r.ManagedItem.Name);
+                        // incomplete args
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        System.Console.WriteLine("Deploy: Missing arguments for Managed Certificate Name and Task Name");
+                        Console.ForegroundColor = defaultFontColour;
 
-                        if (r.Message != null)
-                        {
-                            Console.ForegroundColor = ConsoleColor.Red;
-                            System.Console.WriteLine(r.Message);
-                        }
+                        p.ShowHelp();
                     }
+
+                    if (managedCertName != null)
+                    {
+                        var result = await p.PerformDeployment(managedCertName, taskName);
+                    }
+
+                }
+
+                if (command == "list")
+                {
+                    // list managed sites and status
+                    p.ListManagedCertificates();
+                }
+
+                if (command == "diag")
+                {
+                    var autoFix = false;
+                    var forceAutoDeploy = false;
+
+                    if (args.Contains("autofix"))
+                    {
+                        autoFix = true;
+                    }
+
+                    if (args.Contains("forceautodeploy"))
+                    {
+                        forceAutoDeploy = true;
+                    }
+
+                    p.RunCertDiagnostics(autoFix, forceAutoDeploy);
+                }
+
+                if (command == "importcsv")
+                {
+                    await p.ImportCSV(args);
                 }
             }
-            Console.ForegroundColor = ConsoleColor.White;
-
-            System.Console.WriteLine("Completed:" + results.Where(r => r.IsSuccess == true).Count());
-            if (results.Any(r => r.IsSuccess == false))
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                System.Console.WriteLine("Failed:" + results.Where(r => r.IsSuccess == false).Count());
-                Console.ForegroundColor = ConsoleColor.White;
-            }
-            return results;
+#if DEBUG
+            System.Console.WriteLine("CLI: Completed (DEBUG)");
+            Console.ReadKey();
+#endif
+            return 0;
         }
 
-        private bool PerformCertRequestAndIISBinding(string certDomain, string[] alternativeNames)
+        private static async Task<int> StartHttpChallengeServer(string[] args)
         {
-            // ACME service requires international domain names in ascii mode
-            /* certDomain = _idnMapping.GetAscii(certDomain);
+            System.Console.WriteLine("Starting Certify Http Challenge Server");
 
-             //create cert and binding it
-
-             //Typical command sequence for a new certificate
-
-             //Initialize-ACMEVault -BaseURI https://acme-staging.api.letsencrypt.org/
-
-             // Get-Module -ListAvailable ACMESharp
-             // New-ACMEIdentifier -Dns test7.examplesite.co.uk -Alias test7_examplesite_co_uk636213616564101276 -Label Identifier:test7.examplesite.co.uk
-             // Complete-ACMEChallenge -Ref test7_examplesite_co_uk636213616564101276 -ChallengeType http-01 -Handler manual  -Regenerate
-             // Submit-ACMEChallenge -Ref test7_examplesite_co_uk636213616564101276 -Challenge http-01
-             // Update-ACMEIdentifier -Ref test7_examplesite_co_uk636213616564101276
-             // Update-ACMEIdentifier -Ref test7_examplesite_co_uk636213616564101276
-             // New-ACMECertificate -Identifier test7_examplesite_co_uk636213616564101276 -Alias cert_test7_examplesite_co_uk636213616564101276 -Generate
-             // Update-ACMEIdentifier -Ref test7_examplesite_co_uk636213616564101276
-             // Update-ACMEIdentifier -Ref test7_examplesite_co_uk636213616564101276
-             // Get-ACMECertificate -Ref = ac22dbfe - b75f - 4cac-9247-b40c1d9bf9eb -ExportPkcs12 C:\ProgramData\ACMESharp\sysVault\99-ASSET\ac22dbfe-b75f-4cac-9247-b40c1d9bf9eb-all.pfx -Overwrite
-
-             //get info on existing IIS site we want to create/update SSL binding for
-             IISManager iisManager = new IISManager();
-             var iisSite = iisManager.GetSiteBindingByDomain(certDomain);
-             var certConfig = new CertRequestConfig()
-             {
-                 PrimaryDomain = certDomain,
-                 PerformChallengeFileCopy = true,
-                 WebsiteRootPath = Environment.ExpandEnvironmentVariables(iisSite.PhysicalPath)
-             };
-
-             var certifyManager = new VaultManager(Properties.Settings.Default.VaultPath, LocalDiskVault.VAULT);
-
-             //init vault if not already created
-             certifyManager.InitVault(staging: true);
-
-             //domain alias is used as an ID in both the vault and the LE server, it's specific to one authorization attempt and cannot be reused for renewal
-             var domainIdentifierAlias = certifyManager.ComputeIdentifierAlias(certDomain);
-
-             //NOTE: to support a SAN certificate (multiple alternative domains on one site) the domain validation steps need to be repeat for each name:
-
-             //register identifier with LE, get http challenge spec back
-             //create challenge response answer file under site .well-known, auto configure web.config for extenstionless content, mark challenge prep completed
-             var authState = certifyManager.BeginRegistrationAndValidation(certConfig, domainIdentifierAlias);
-
-             //ask LE to check our answer to their authorization challenge (http), LE will then attempt to fetch our answer, if all accessible and correct (authorized) LE will then allow us to request a certificate
-             if (authState.Identifier.Authorization.IsPending())
-             {
-                 //prepare IIS with answer for the LE challenege
-                 certifyManager.PerformIISAutomatedChallengeResponse(certConfig, authState);
-
-                 //ask LE to validate our challenge response
-                 certifyManager.SubmitChallenge(domainIdentifierAlias, "http-01");
-             }
-
-             //now check if LE has validated our challenge answer
-             bool validated = certifyManager.CompleteIdentifierValidationProcess(domainIdentifierAlias);
-
-             if (validated)
-             {
-                 var certRequestResult = certifyManager.PerformCertificateRequestProcess(domainIdentifierAlias, alternativeIdentifierRefs: null);
-                 if (certRequestResult.IsSuccess)
-                 {
-                     string pfxPath = certRequestResult.Result.ToString();
-                     //Install certificate into certificate store and bind to IIS site
-                     //TODO, match by site id?
-                     if (iisManager.InstallCertForDomain(certDomain, pfxPath, cleanupCertStore: true, skipBindings: false))
-                     {
-                         //all done
-                         System.Diagnostics.Debug.WriteLine("Certificate installed and SSL bindings updated for " + certDomain);
-                         return true;
-                     }
-                     else
-                     {
-                         System.Diagnostics.Debug.WriteLine("Failed to install PFX file for Certificate.");
-                         return false;
-                     }
-                 }
-                 else
-                 {
-                     System.Diagnostics.Debug.WriteLine("LE did not issue a valid certificate in the time allowed.");
-                     return false;
-                 }
-             }
-             else
-             {
-                 System.Diagnostics.Debug.WriteLine("Validation of the required challenges did not complete successfully.");
-                 return false;
-             }*/
-
-            return false;
-        }
-
-        private void InitTelemetry()
-        {
-            if (Certify.Properties.Settings.Default.EnableAppTelematics)
+            if (args.Length < 2)
             {
-                tc = new Certify.Management.Util().InitTelemetry();
-                tc.TrackEvent("Start");
+                System.Console.WriteLine("Error: control key arguments required e.g.  certify httpchallenge keys=CONTROLKEY,CHECKKEY");
+                return -1;
             }
+            //syntax: certify httpchallenge keys=CONTROLKEY,CHECKKEY
+
+            var keys = args[1].Replace("keys=", "").Split(',');
+
+
+            // start an http challenge server
+            var challengeServer = new Core.Management.Challenges.HttpChallengeServer();
+            var config = SharedUtils.ServiceConfigManager.GetAppServiceConfig();
+
+            if (!challengeServer.Start(config.HttpChallengeServerPort, controlKey: keys[0], checkKey: keys[1]))
+            {
+                // failed to start http challenge server
+                return -1;
+            }
+
+            // wait for server to stop
+
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            while (challengeServer.IsRunning() && stopwatch.ElapsedMilliseconds < MAX_CHALLENGE_SERVER_RUNTIME)
+            {
+                await Task.Delay(500);
+            }
+
+            // if we exceeded the allowed time for challenge server to run, ensure it is closed and quit
+            if (challengeServer.IsRunning())
+            {
+                challengeServer.Stop();
+            }
+            return 0;
         }
     }
 }

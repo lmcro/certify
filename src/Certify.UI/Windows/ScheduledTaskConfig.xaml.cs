@@ -1,66 +1,98 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
+﻿using System.Windows;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Shapes;
+using Certify.Locales;
+using Certify.UI.ViewModel;
 
 namespace Certify.UI.Windows
 {
+    public class TaskVm : Models.BindableBase
+    {
+        public bool TaskConfigured { get; set; } = false;
+        public bool UseBackgroundService { get; set; } = true;
+    }
+
     /// <summary>
-    /// Interaction logic for ScheduledTaskConfig.xaml
+    /// Interaction logic for ScheduledTaskConfig.xaml 
     /// </summary>
     public partial class ScheduledTaskConfig
     {
-        public bool TaskConfigured { get; set; } = false;
+        public TaskVm TaskSettings = new TaskVm();
 
         public ScheduledTaskConfig()
         {
             InitializeComponent();
+
             //check if scheduled task already configured
+            TaskSettings.UseBackgroundService = AppViewModel.Current.Preferences.UseBackgroundServiceAutoRenewal;
 
-            var certifyManager = new Certify.Management.CertifyManager();
-            TaskConfigured = certifyManager.IsWindowsScheduledTaskPresent();
+            var taskScheduler = new Shared.TaskScheduler();
+            TaskSettings.TaskConfigured = taskScheduler.IsWindowsScheduledTaskPresent();
 
-            if (TaskConfigured)
+            if (TaskSettings.TaskConfigured)
             {
-                AutoRenewPrompt.Text = "The auto renewal task is already configured. If required you can change the admin user account used to execute the task.";
+                AutoRenewPrompt.Text = SR.ScheduledTaskConfig_AlreadyConfiged;
                 AutoRenewPrompt.Foreground = Brushes.DarkGreen;
             }
-        }
+            DataContext = TaskSettings;
 
-        private void OK_Click(object sender, RoutedEventArgs e)
-        {
-            //create/update scheduled task
-            if (!String.IsNullOrEmpty(Username.Text) && (!String.IsNullOrEmpty(Password.Password)))
+            if (TaskSettings.UseBackgroundService)
             {
-                var certifyManager = new Certify.Management.CertifyManager();
-                if (certifyManager.CreateWindowsScheduledTask(Username.Text, Password.Password))
-                {
-                    MessageBox.Show("Scheduled task created");
-                    this.Close();
-                }
-                else
-                {
-                    MessageBox.Show("Failed to create scheduled task with given credentials");
-                }
+                RadioUseBackgroundService.IsChecked = true;
+                RadioUseScheduledTask.IsChecked = false;
             }
             else
             {
-                MessageBox.Show("Please provide the username and password for an admin level user.");
+                RadioUseBackgroundService.IsChecked = false;
+                RadioUseScheduledTask.IsChecked = true;
             }
         }
 
-        private void Cancel_Click(object sender, RoutedEventArgs e)
+        private async void OK_Click(object sender, RoutedEventArgs e)
         {
-            this.Close();
+            var taskScheduler = new Shared.TaskScheduler();
+
+            if (TaskSettings.UseBackgroundService)
+            {
+                // let background service do renewals
+                var prefs = await AppViewModel.Current.CertifyClient.GetPreferences();
+
+                prefs.UseBackgroundServiceAutoRenewal = true;
+
+                await AppViewModel.Current.SetPreferences(prefs);
+
+                //remove any existing scheduled task
+                taskScheduler.DeleteWindowsScheduledTask();
+
+                Close();
+            }
+            else
+            {
+                //create/update scheduled task
+                if (!string.IsNullOrEmpty(Username.Text) && (!string.IsNullOrEmpty(Password.Password)))
+                {
+                    if (taskScheduler.CreateWindowsScheduledTask(Username.Text, Password.Password))
+                    {
+                        // set pref to use scheduled task for auto renewal let background service do renewals
+                        var prefs = await AppViewModel.Current.CertifyClient.GetPreferences();
+                        prefs.UseBackgroundServiceAutoRenewal = false;
+                        await AppViewModel.Current.SetPreferences(prefs);
+
+                        MessageBox.Show(SR.ScheduledTaskConfig_TaskCreated);
+                        Close();
+                    }
+                    else
+                    {
+                        MessageBox.Show(SR.ScheduledTaskConfig_FailedToCreateTask);
+                    }
+                }
+                else
+                {
+                    MessageBox.Show(SR.ScheduledTaskConfig_PleaseProvideCredential);
+                }
+            }
         }
+
+        private void Cancel_Click(object sender, RoutedEventArgs e) => Close();
+
     }
 }

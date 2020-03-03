@@ -1,17 +1,12 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
 using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
+using Certify.Locales;
+using Certify.UI.Settings;
+using Microsoft.ApplicationInsights;
 
 namespace Certify.UI
 {
@@ -22,109 +17,322 @@ namespace Certify.UI
     {
         public enum PrimaryUITabs
         {
-            ManagedItems = 0,
+            ManagedCertificates = 0,
 
             CurrentProgress = 1
         }
 
-        protected Certify.UI.ViewModel.AppModel MainViewModel
+        private TelemetryClient tc = null;
+
+        protected Certify.UI.ViewModel.AppViewModel _appViewModel => UI.ViewModel.AppViewModel.Current;
+        protected Certify.UI.ViewModel.ManagedCertificateViewModel _itemViewModel => UI.ViewModel.ManagedCertificateViewModel.Current;
+        private const int NUM_ITEMS_FOR_REMINDER = 3;
+        private const int NUM_ITEMS_FOR_LIMIT = 10;
+
+        public int NumManagedCertificates
         {
             get
             {
-                return UI.ViewModel.AppModel.AppViewModel;
+                if (_appViewModel != null && _appViewModel.ManagedCertificates != null)
+                {
+                    return _appViewModel.ManagedCertificates.Count;
+                }
+                else
+                {
+                    return 0;
+                }
             }
         }
 
         public MainWindow()
         {
             InitializeComponent();
-
-            if (!System.ComponentModel.DesignerProperties.GetIsInDesignMode(this))
-            {
-                this.DataContext = MainViewModel;
-            }
+            DataContext = _appViewModel;
         }
 
-        private void Button_NewCertificate(object sender, RoutedEventArgs e)
+        private async void Button_NewCertificate(object sender, RoutedEventArgs e)
         {
-            //present new managed item (certificate request) UI
-            if (!MainViewModel.IsRegisteredVersion && MainViewModel.ManagedSites != null && MainViewModel.ManagedSites.Count >= 5)
+#if ALPHA
+            MessageBox.Show("You are using an alpha version of Certify The Web. You should only use this version for testing and should not consider it suitable for use on production servers.");
+#endif
+
+#if BETA
+            MessageBox.Show("You are using a beta version of Certify The Web. Please report any issues you find.");
+#endif
+
+            // save or discard site changes before creating a new site/certificate
+            if (!await _itemViewModel.ConfirmDiscardUnsavedChanges())
             {
-                MessageBox.Show("You are using the trial version of this app. Please purchase a registration key to upgrade. See the Register option on the About tab.");
                 return;
             }
 
-            //select tab Managed Items
-            MainViewModel.MainUITabIndex = (int)PrimaryUITabs.ManagedItems;
+            if (!_appViewModel.IsRegisteredVersion && _appViewModel.ManagedCertificates != null && _appViewModel.ManagedCertificates.Count >= NUM_ITEMS_FOR_REMINDER)
+            {
+                MessageBox.Show(SR.MainWindow_TrialLimitationReached);
 
-            MainViewModel.SelectedItem = new Certify.Models.ManagedSite();
+                if (_appViewModel.ManagedCertificates?.Count >= NUM_ITEMS_FOR_LIMIT)
+                {
+                    return;
+                }
+            }
+            else
+            {
+                if (_appViewModel.IsRegisteredVersion && _appViewModel.ManagedCertificates?.Count >= NUM_ITEMS_FOR_LIMIT)
+                {
+                    var licensingManager = ViewModel.AppViewModel.Current.PluginManager?.LicensingManager;
+
+                    if (licensingManager != null && !await licensingManager.IsInstallActive(ViewModel.AppViewModel.ProductTypeId, Management.Util.GetAppDataFolder()))
+                    {
+                        _appViewModel.IsRegisteredVersion = false;
+                    }
+                }
+            }
+
+            // check user has registered a contact with LE first
+            if (string.IsNullOrEmpty(_appViewModel.PrimaryContactEmail))
+            {
+                EnsureContactRegistered();
+                return;
+            }
+
+            //present new managed item (certificate request) UI
+            //select tab Managed Items
+            _appViewModel.MainUITabIndex = (int)PrimaryUITabs.ManagedCertificates;
+
+            _appViewModel.SelectedItem = null; // deselect site list item
+            _appViewModel.SelectedItem = new Certify.Models.ManagedCertificate();
+
+            //default to auto deploy for new managed certs
+            _appViewModel.SelectedItem.RequestConfig.DeploymentSiteOption = Models.DeploymentOption.Auto;
         }
 
-        private void Button_RenewAll(object sender, RoutedEventArgs e)
+        private async void Button_RenewAll(object sender, RoutedEventArgs e)
         {
-            //present new renew all confirmation
-            if (MessageBox.Show("This will renew certificates for all auto-renewed items. Proceed?", "Renew All", MessageBoxButton.YesNo) == MessageBoxResult.Yes)
+            // save or discard site changes before creating a new site/certificate
+            if (!await _itemViewModel.ConfirmDiscardUnsavedChanges())
             {
-                MainViewModel.MainUITabIndex = (int)PrimaryUITabs.CurrentProgress;
+                return;
+            }
 
-                bool autoRenewalsOnly = true;
+            //present new renew all confirmation
+            if (MessageBox.Show(SR.MainWindow_RenewAllConfirm, SR.Renew_All, MessageBoxButton.YesNo) == MessageBoxResult.Yes)
+            {
+                _appViewModel.MainUITabIndex = (int)PrimaryUITabs.CurrentProgress;
+
+                var autoRenewalsOnly = true;
                 // renewals is a long running process so we need to run renewals process in the
                 // background and present UI to show progress.
                 // TODO: We should prevent starting the renewals process if it is currently in progress.
-                if (MainViewModel.RenewAllCommand.CanExecute(autoRenewalsOnly))
+                if (_appViewModel.RenewAllCommand.CanExecute(autoRenewalsOnly))
                 {
-                    MainViewModel.RenewAllCommand.Execute(autoRenewalsOnly);
+                    _appViewModel.RenewAllCommand.Execute(autoRenewalsOnly);
                 }
             }
         }
 
-        private void Button_ScheduledTaskConfig(object sender, RoutedEventArgs e)
+        private async void Window_Loaded(object sender, RoutedEventArgs e)
         {
-            //show UI to update auto renewal task
-            var d = new Windows.ScheduledTaskConfig { Owner = this };
-            d.ShowDialog();
-        }
+            var uiSettings = UISettings.Load();
 
-        private void MetroWindow_Loaded(object sender, RoutedEventArgs e)
-        {
-            //check for any startup actions required such as vault import
-
-            if (MainViewModel.ImportedManagedSites.Any())
+            if (uiSettings != null)
             {
-                //show import ui
-                Task.Delay(100);
-                var d = new Windows.ImportManagedSites { Owner = this };
-                d.ShowDialog();
+                Width = uiSettings.Width;
+                Height = uiSettings.Height;
+                Left = uiSettings.Left;
+                Top = uiSettings.Top;
+
+
+                // set theme based on pref
+                if (uiSettings.UITheme != null)
+                {
+                    ((Certify.UI.App)App.Current).ToggleTheme(uiSettings.UITheme);
+                }
             }
 
-            if (!MainViewModel.IsRegisteredVersion)
+            await PerformAppStartupChecks();
+        }
+
+        private async Task PerformAppStartupChecks()
+        {
+            Mouse.OverrideCursor = Cursors.AppStarting;
+            _appViewModel.IsLoading = true;
+
+            await _appViewModel.InitServiceConnections();
+
+            if (_appViewModel.IsServiceAvailable)
             {
-                this.Title += " [Free Trial Version]";
+                await _appViewModel.LoadSettingsAsync();
+            }
+
+            Mouse.OverrideCursor = Cursors.Arrow;
+
+            // quit if service/service client cannot connect
+            if (!_appViewModel.IsServiceAvailable)
+            {
+                _appViewModel.IsLoading = false;
+
+                var config = _appViewModel.CertifyClient.GetAppServiceConfig();
+                if (!string.IsNullOrEmpty(config.ServiceFaultMsg))
+                {
+                    MessageBox.Show("Certify SSL Manager service not started. " + config.ServiceFaultMsg);
+                }
+                else
+                {
+                    MessageBox.Show("Certify SSL Manager service not started. Please restart the service. If this problem persists please refer to https://docs.certifytheweb.com/docs/faq.html and if you cannot resolve the problem contact support@certifytheweb.com.");
+                }
+
+                App.Current.Shutdown();
+                return;
+            }
+
+            var diagnostics = await Management.Util.PerformAppDiagnostics();
+            if (diagnostics.Any(d => d.IsSuccess == false))
+            {
+                MessageBox.Show(diagnostics.First(d => d.IsSuccess == false).Message, "Warning");
+            }
+
+            // init telemetry if enabled
+            InitTelemetry();
+
+            // setup plugins
+
+            _appViewModel.PluginManager = new Management.PluginManager();
+
+            _appViewModel.PluginManager.LoadPlugins(new List<string> { "Licensing", "DashboardClient" });
+
+            var licensingManager = _appViewModel.PluginManager.LicensingManager;
+            if (licensingManager != null)
+            {
+                if (licensingManager.IsInstallRegistered(ViewModel.AppViewModel.ProductTypeId, Certify.Management.Util.GetAppDataFolder()))
+                {
+                    _appViewModel.IsRegisteredVersion = true;
+                }
+            }
+
+            // check if IIS is available, if so also populates IISVersion
+            await _appViewModel.CheckServerAvailability(Models.StandardServerTypes.IIS);
+
+            _appViewModel.IsLoading = false;
+
+            // check if primary contact registered with LE
+            EnsureContactRegistered();
+
+            if (!_appViewModel.IsRegisteredVersion)
+            {
+                Title += SR.MainWindow_TitleTrialPostfix;
+            }
+
+            //check for updates and report result to view model
+            if (_appViewModel.IsServiceAvailable)
+            {
+                var updateCheck = await _appViewModel.CertifyClient.CheckForUpdates();
+
+                if (updateCheck != null && updateCheck.IsNewerVersion)
+                {
+                    _appViewModel.UpdateCheckResult = updateCheck;
+                    _appViewModel.IsUpdateAvailable = true;
+
+                    //TODO: move this to UpdateCheckUtils and share with update from About page
+                    // if update is mandatory (where there is a major bug etc) quit until user updates
+                    if (updateCheck.MustUpdate)
+                    {
+                        // offer to take user to download page
+                        var gotoDownload = MessageBox.Show(updateCheck.Message.Body + "\r\nVisit download page now?", ConfigResources.AppName, MessageBoxButton.YesNo);
+                        if (gotoDownload == MessageBoxResult.Yes)
+                        {
+                            var sInfo = new System.Diagnostics.ProcessStartInfo(ConfigResources.AppWebsiteURL);
+                            System.Diagnostics.Process.Start(sInfo);
+                        }
+                        else
+                        {
+                            MessageBox.Show(SR.Update_MandatoryUpdateQuit);
+                        }
+
+                        //quit
+                        App.Current.Shutdown();
+                    }
+                }
             }
         }
 
-        private void MetroWindow_ContentRendered(object sender, EventArgs e)
+        private void EnsureContactRegistered()
         {
-            if (!MainViewModel.HasRegisteredContacts)
+            if (!_appViewModel.HasRegisteredContacts)
             {
                 //start by registering
-                MessageBox.Show("Get started by registering a new contact, then you can start requesting certificates.");
-                var d = new Windows.EditContactDialog { Owner = this };
+                MessageBox.Show(SR.MainWindow_GetStartGuideWithNewCert);
+                var d = new Windows.EditContactDialog { };
                 d.ShowDialog();
             }
         }
 
-        private void ButtonUpdateAvailable_Click(object sender, RoutedEventArgs e)
+        private void InitTelemetry()
         {
-            if (MainViewModel.UpdateCheckResult != null)
+            if (_appViewModel.Preferences.EnableAppTelematics)
             {
-                var gotoDownload = MessageBox.Show(MainViewModel.UpdateCheckResult.Message.Body + "\r\nVisit download page now?", Core.Properties.Resources.AppName, MessageBoxButton.YesNo);
-                if (gotoDownload == MessageBoxResult.Yes)
+                tc = new Certify.Management.Util().InitTelemetry();
+                tc.TrackEvent("Start");
+            }
+            else
+            {
+                tc = null;
+            }
+        }
+
+        private async void ButtonUpdateAvailable_Click(object sender, RoutedEventArgs e)
+        {
+            if (_appViewModel.IsUpdateInProgress)
+            {
+                return;
+            }
+
+            if (_appViewModel.UpdateCheckResult != null)
+            {
+                // offer to start download and notify when ready to apply
+                if (MessageBox.Show(_appViewModel.UpdateCheckResult.Message.Body + "\r\n" + SR.Update_DownloadNow, ConfigResources.AppName, MessageBoxButton.YesNo) == MessageBoxResult.Yes)
                 {
-                    System.Diagnostics.ProcessStartInfo sInfo = new System.Diagnostics.ProcessStartInfo(MainViewModel.UpdateCheckResult.Message.DownloadPageURL);
-                    System.Diagnostics.Process.Start(sInfo);
+                    _appViewModel.IsUpdateInProgress = true;
+                    UpdateIcon.Spin = true;
+                    UpdateIcon.SpinDuration = 1;
+
+                    _appViewModel.UpdateCheckResult = await new Utils.UpdateCheckUtils().UpdateWithDownload();
+                    _appViewModel.IsUpdateInProgress = false;
+                    UpdateIcon.Spin = false;
+                }
+                else
+                {
+                    // otherwise offer to go to download page
+                    var gotoDownload = MessageBox.Show(_appViewModel.UpdateCheckResult.Message.Body + "\r\n" + SR.MainWindow_VisitDownloadPage, ConfigResources.AppName, MessageBoxButton.YesNo);
+                    if (gotoDownload == MessageBoxResult.Yes)
+                    {
+                        var sInfo = new System.Diagnostics.ProcessStartInfo(_appViewModel.UpdateCheckResult.Message.DownloadPageURL);
+                        System.Diagnostics.Process.Start(sInfo);
+                    }
                 }
             }
+        }
+
+        private async void MetroWindow_Closing(object sender, CancelEventArgs e)
+        {
+            // allow cancelling exit to save changes
+            if (!await _itemViewModel.ConfirmDiscardUnsavedChanges())
+            {
+                e.Cancel = true;
+            }
+
+            var uiSettings = UISettings.Load();
+
+            if (uiSettings == null)
+            {
+                uiSettings = new UISettings();
+            }
+
+            uiSettings.Width = Width;
+            uiSettings.Height = Height;
+            uiSettings.Left = Left;
+            uiSettings.Top = Top;
+            
+            UISettings.Save(uiSettings);
         }
     }
 }
